@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: users/{userId}/plans
+    // Document ID: {planId}
+    // Fields:
+    //   - userId: string (required)
+    //   - idea: string (required, max 1000 chars)
+    //   - steps: list (required, max 8 items)
+    //   - megaPrompt: string (required, max 5000 chars)
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidPlan(data) {
+      return hasOnlyAllowedFields(['userId', 'idea', 'steps', 'megaPrompt', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.idea is string && data.idea.size() <= 1000 &&
+             data.steps is list && data.steps.size() <= 10 &&
+             data.megaPrompt is string && data.megaPrompt.size() <= 5000 &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      request.resource.data.createdAt == resource.data.createdAt;
+
+      match /plans/{planId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidPlan(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
